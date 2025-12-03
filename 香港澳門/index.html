@@ -1,0 +1,543 @@
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { Bus, Clock, MapPin, DollarSign, Edit, Lightbulb, ListPlus, X, ChevronLeft, ChevronRight, Home, TrendingUp, Anchor, Plane, User, Navigation } from 'lucide-react';
+// Firebase Imports
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { setLogLevel } from 'firebase/app';
+
+// 設定 Firebase Log 級別為 Debug
+setLogLevel('debug');
+
+// --- 初始的七天六夜行程數據結構 (已更新: mapLink 欄位) ---
+// 確保每個項目都有 mapLink 欄位，即使是空字串
+const initialItineraryData = {
+  '1/9 (五)': [
+    { id: 101, time: '13:00', icon: Bus, title: '機場快線 → 飯店', transport: '機場快線 + 港鐵', cost: '約 HK$120', notes: '購買八達通卡，機場快線抵達九龍站或香港站，轉乘港鐵至飯店（建議：尖沙咀/旺角區）。', mapLink: 'https://maps.app.goo.gl/9Q8bL5F4g3E8C7WJ6', extension: '在地人首選：搭乘 E21/A21 巴士進入市區，但時間較長。', lastEditedBy: '', lastEditedAt: null },
+    { id: 102, time: '16:00', icon: TrendingUp, title: '中環歷史徒步：半山電梯', transport: '港鐵 + 步行', cost: 'HK$0', notes: '從中環站出發，沿著荷李活道和古董街散步。搭乘中環至半山自動扶梯。', mapLink: 'https://maps.app.goo.gl/Y3kGf5hT9tM4k2D8A', extension: 'PMQ元創方和石板街是拍照的好地點。', lastEditedBy: '', lastEditedAt: null },
+    { id: 103, time: '18:30', icon: DollarSign, title: '晚餐：蘭桂坊或大排檔', transport: '步行', cost: 'HK$150-300', notes: '體驗中環的夜生活文化，或轉戰上環找一家大排檔。', mapLink: 'https://maps.app.goo.gl/P2hK7G7jD4gH3jK5A', extension: '晚餐後可前往太平山頂，俯瞰維港夜景。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/10 (六)': [
+    { id: 201, time: '10:00', icon: Bus, title: '油尖旺：彌敦道與廟街', transport: '港鐵 (油麻地/旺角)', cost: 'HK$10-20', notes: '探索九龍的在地生活氣息，參觀天后廟和玉器市場。', mapLink: 'https://maps.app.goo.gl/2L4zX9vSg2Z8FjT6A', extension: '前往金魚街或花墟，感受在地人氣息。', lastEditedBy: '', lastEditedAt: null },
+    { id: 202, time: '14:00', icon: Anchor, title: '搭乘天星小輪：尖沙咀→中環', transport: '天星小輪', cost: 'HK$3-5', notes: '全球最便宜的觀光體驗之一，欣賞維港兩岸的經典景色。', mapLink: 'https://maps.app.goo.gl/E4GkF5bT9yX8C7WJ6', extension: '傍晚可在尖沙咀海旁看「幻彩詠香江」燈光秀。', lastEditedBy: '', lastEditedAt: null },
+    { id: 203, time: '18:00', icon: DollarSign, title: '晚餐：海鮮或港式火鍋', transport: '港鐵', cost: 'HK$250-450', notes: '可考慮到西貢或鯉魚門享受海鮮大餐（需預留交通時間）。', mapLink: 'https://maps.app.goo.gl/5r8gC1M8Ww7v5YtT8', extension: '回程可到深水埗找尋便宜的電子零件或布料。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/11 (日)': [
+    { id: 301, time: '09:00', icon: Bus, title: '昂坪 360 纜車', transport: '港鐵 (東涌站)', cost: '約 HK$270 (來回)', notes: '搭乘昂坪纜車至大嶼山。建議購買水晶車廂體驗。', mapLink: 'https://maps.app.goo.gl/J8hH3jK5A6wE7R9F4', extension: '昂坪市集有許多紀念品和美食。', lastEditedBy: '', lastEditedAt: null },
+    { id: 302, time: '11:00', icon: Home, title: '大嶼山：天壇大佛與寶蓮禪寺', transport: '步行', cost: 'HK$0', notes: '參拜大佛與寺廟，感受宗教文化與山林氣息。', mapLink: 'https://maps.app.goo.gl/T6Gf5hT9tM4k2D8A', extension: '附近有心經簡林可順道參觀。', lastEditedBy: '', lastEditedAt: null },
+    { id: 303, time: '15:00', icon: Bus, title: '大澳漁村：水上棚屋', transport: '巴士 21 號', cost: 'HK$7-12', notes: '有「東方威尼斯」之稱的漁村，觀賞棚屋奇景。', mapLink: 'https://maps.app.goo.gl/Y3kGf5hT9tM4k2D8A', extension: '可搭乘小船出海，有機會看到中華白海豚。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/12 (一)': [ 
+    { id: 401, time: '09:30', icon: Bus, title: '香港市區 → 香港口岸', transport: '港鐵 + B6 巴士', cost: '約 HK$25-35', notes: '建議搭港鐵至東涌站 (Tung Chung)，轉乘 B6 巴士直達香港口岸。這是最經濟的選擇。', mapLink: 'https://maps.app.goo.gl/y2gR7wX2QyXzV8pT9', extension: '若行李多，可考慮搭乘跨境直通巴士 (如永東、港澳快線)，直接從市區上車，但費用較高 (HK$160-180)。', lastEditedBy: '', lastEditedAt: null },
+    { id: 402, time: '11:00', icon: Plane, title: '搭乘穿梭巴士 (金巴) 過境', transport: '港珠澳大橋穿梭巴士 (港澳線)', cost: 'HK$65 (日間)', notes: '日間時段為 06:00 - 23:59。車程約 40-50 分鐘。需在香港口岸完成出境，再到澳門口岸完成入境手續。', mapLink: 'https://maps.app.goo.gl/y2gR7wX2QyXzV8pT9', extension: '建議提前在線上預購車票，避免現場排隊。', lastEditedBy: '', lastEditedAt: null },
+    { id: 403, time: '12:45', icon: Bus, title: '澳門口岸 → 氹仔飯店', transport: '飯店免費穿梭巴士 (發財巴)', cost: 'MOP$0', notes: '出澳門口岸後，循指示牌前往「酒店免費穿梭巴士」區。尋找您飯店（或鄰近飯店，如威尼斯人、銀河）的專線車。', mapLink: 'https://maps.app.goo.gl/9y5jBfN6M2Xw3TfA7', extension: '若飯店沒有免費巴士，可搭乘公共巴士 102X 往路氹城或搭乘計程車。', lastEditedBy: '', lastEditedAt: null },
+    { id: 404, time: '15:00', icon: MapPin, title: '路環市區慢活與葡撻巡禮', transport: '澳門公車', cost: 'MOP$6-10 (公車)', notes: '目標：路環市區。參觀聖方濟各聖堂，並在安德魯餅店本店享用葡式蛋撻。體驗澳門的慢活時光。', mapLink: 'https://maps.app.goo.gl/5r8gC1M8Ww7v5YtT8', extension: '可沿路環海岸線散步，欣賞舊漁村風光。', lastEditedBy: '', lastEditedAt: null },
+    { id: 405, time: '18:00', icon: DollarSign, title: '晚餐：氹仔/路環在地美食', transport: '步行或公車', cost: 'MOP$200-400 (預估)', notes: '可在路環嘗試海鮮大排檔，或返回氹仔舊城區品嚐正宗土生葡國菜。', mapLink: 'https://maps.app.goo.gl/2L4zX9vSg2Z8FjT6A', extension: '飯後可去路氹城看水舞間或威尼斯人的大運河。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/13 (二)': [
+    { id: 501, time: '10:00', icon: Bus, title: '澳門半島：大三巴牌坊', transport: '公車或計程車', cost: 'MOP$6-50', notes: '參觀澳門地標，從議事亭前地開始，沿途經過多個世界遺產景點。', mapLink: 'https://maps.app.goo.gl/W9Gf5hT9tM4k2D8A', extension: '沿途可品嚐豬扒包、魚蛋等街頭小吃。', lastEditedBy: '', lastEditedAt: null },
+    { id: 502, time: '13:00', icon: DollarSign, title: '午餐：在地葡國餐廳', transport: '步行', cost: 'MOP$150-300', notes: '在世界遺產區周邊尋找一家歷史悠久的葡國餐廳享用午餐。', mapLink: 'https://maps.app.goo.gl/E4GkF5bT9yX8C7WJ6', extension: '嘗試馬介休球和葡式燒雞。', lastEditedBy: '', lastEditedAt: null },
+    { id: 503, time: '16:00', icon: Home, title: '東望洋燈塔與盧家大屋', transport: '步行或公車', cost: 'HK$0', notes: '東望洋燈塔是澳門半島的最高點，可眺望全景。盧家大屋是典型中式民居。', mapLink: 'https://maps.app.goo.gl/G7H3jK5A6wE7R9F4', extension: '夜晚可去新馬路一帶欣賞舊城區的燈光。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/14 (三)': [
+    { id: 601, time: '10:00', icon: TrendingUp, title: '路氹城渡假村巡禮', transport: '飯店接駁車', cost: 'MOP$0', notes: '免費搭乘飯店接駁車，參觀威尼斯人、巴黎人和倫敦人等主題渡假村，拍照打卡。', mapLink: 'https://maps.app.goo.gl/T6Gf5hT9tM4k2D8A', extension: '在威尼斯人體驗貢多拉船，或在倫敦人與大笨鐘合影。', lastEditedBy: '', lastEditedAt: null },
+    { id: 602, time: '13:00', icon: DollarSign, title: '午餐：購物中心美食街', transport: '步行', cost: 'MOP$100-200', notes: '在飯店內的購物中心解決午餐，選擇多元。', mapLink: 'https://maps.app.goo.gl/J8H3jK5A6wE7R9F4', extension: '可在路氹區的免稅店購買伴手禮。', lastEditedBy: '', lastEditedAt: null },
+    { id: 603, time: '16:00', icon: MapPin, title: '氹仔舊城區與官也街', transport: '輕軌或公車', cost: 'MOP$6-10', notes: '搭乘輕軌或公車前往氹仔舊城區，逛官也街，採購伴手禮。', mapLink: 'https://maps.app.goo.gl/P2hK7G7jD4gH3jK5A', extension: '可品嚐木糠布丁，並前往龍環葡韻住宅式博物館參觀。', lastEditedBy: '', lastEditedAt: null },
+  ],
+  '1/15 (四)': [
+    { id: 701, time: '10:00', icon: Home, title: '最後採買與退房', transport: '步行', cost: 'MOP$0', notes: '在飯店周邊或附近的商場進行最後的伴手禮採買。', mapLink: 'https://maps.app.goo.gl/9Q8bL5F4g3E8C7WJ6', extension: '確保所有物品打包完畢，於規定時間前辦理退房手續。', lastEditedBy: '', lastEditedAt: null },
+    { id: 702, time: '12:00', icon: Bus, title: '飯店 → 澳門機場', transport: '飯店接駁車 或 計程車', cost: 'MOP$0 或 MOP$100 (計程車)', notes: '搭乘飯店免費巴士直達機場（如有的話），或搭乘計程車前往澳門國際機場 (MFM)。', mapLink: 'https://maps.app.goo.gl/E4GkF5bT9yX8C7WJ6', extension: '請預留充足時間，特別是辦理登機和通關手續。', lastEditedBy: '', lastEditedAt: null },
+  ],
+};
+
+// 編輯 Modal 元件 (已更新：新增 mapLink 欄位)
+const EditModal = ({ item, onClose, onSave }) => {
+  const [editedItem, setEditedItem] = useState(item);
+
+  const handleChange = (field, value) => {
+    setEditedItem(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = () => {
+    // onSave 會觸發 Firestore 寫入
+    onSave(editedItem);
+    onClose();
+  };
+
+  const fields = [
+    { label: '活動標題', key: 'title', placeholder: '輸入活動名稱' },
+    { label: '預定時間', key: 'time', placeholder: '例如：10:30' },
+    { label: '交通方式', key: 'transport', placeholder: '例如：公車或步行' },
+    { label: '預估花費', key: 'cost', placeholder: '例如：MOP$65' },
+    { label: '旅遊註記', key: 'notes', placeholder: '輸入詳細提醒事項' },
+    { label: '延伸玩法/建議', key: 'extension', placeholder: '例如：在地人首選巴士（非地圖連結）' },
+    { label: 'Google地圖連結 (URL)', key: 'mapLink', placeholder: '貼上地圖連結以啟用導航' }, // 新增地圖連結欄位
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div className="p-5 border-b flex justify-between items-center">
+          <h3 className="text-xl font-bold text-gray-800">編輯行程：{item.title}</h3>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {fields.map(({ label, key, placeholder }) => (
+            <div key={key}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+              <textarea
+                value={editedItem[key]}
+                onChange={(e) => handleChange(key, e.target.value)}
+                placeholder={placeholder}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm h-auto min-h-[40px]"
+                rows={key === 'notes' ? 3 : 1}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="p-4 border-t flex justify-end space-x-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition font-semibold"
+          >
+            儲存修改
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 行程卡片元件 (已更新：新增地圖按鈕)
+const ItineraryCard = ({ item, onEdit }) => {
+  const IconComponent = item.icon;
+  // 格式化時間戳記
+  const lastEditedTime = item.lastEditedAt 
+    ? new Date(item.lastEditedAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }) 
+    : '';
+
+  // 檢查 mapLink 是否為有效的 URL
+  const isValidMapLink = item.mapLink && item.mapLink.startsWith('http');
+
+  return (
+    <div className="bg-white rounded-xl shadow-lg hover:shadow-xl transition duration-300 ease-in-out overflow-hidden transform hover:scale-[1.01] mb-6 p-4 border border-gray-100">
+
+      {/* Header & Edit Button */}
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center space-x-3">
+          <div className="p-3 rounded-full bg-blue-500 text-white">
+            <IconComponent className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 font-medium">{item.time}</p>
+            <h2 className="text-lg font-bold text-gray-900">{item.title}</h2>
+          </div>
+        </div>
+        <button onClick={() => onEdit(item)} className="p-2 text-blue-500 hover:text-blue-700 transition">
+          <Edit className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Details Grid */}
+      <div className="grid grid-cols-2 gap-3 text-sm mt-3 border-t pt-3">
+
+        {/* Transportation */}
+        <div className="flex items-center space-x-2">
+          <Bus className="w-4 h-4 text-green-500" />
+          <p className="text-gray-600 font-medium">交通: {item.transport}</p>
+        </div>
+
+        {/* Cost */}
+        <div className="flex items-center space-x-2">
+          <DollarSign className="w-4 h-4 text-red-500" />
+          <p className="text-gray-600 font-medium">花費: {item.cost}</p>
+        </div>
+      </div>
+
+      {/* Notes (Detailed Tip) */}
+      <div className="col-span-2 mt-2 pt-2 border-t border-gray-100">
+        <p className="text-gray-700 flex items-start">
+          <ListPlus className="w-4 h-4 text-yellow-600 flex-shrink-0 mt-1 mr-2" />
+          <span className='font-bold mr-1'>旅遊註記:</span> {item.notes}
+        </p>
+      </div>
+
+      {/* Extension/Tips */}
+      {item.extension && (
+        <div className="col-span-2 mt-2">
+          <p className="text-gray-700 flex items-start">
+            <Lightbulb className="w-4 h-4 text-purple-600 flex-shrink-0 mt-1 mr-2" />
+            <span className='font-bold mr-1'>延伸玩法/建議:</span>
+            {item.extension}
+          </p>
+        </div>
+      )}
+
+      {/* 地圖導航按鈕 (新增) */}
+      {isValidMapLink && (
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <a 
+                href={item.mapLink} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center px-4 py-2 bg-yellow-500 text-white font-semibold rounded-lg shadow-md hover:bg-yellow-600 transition"
+            >
+                <Navigation className="w-5 h-5 mr-2" />
+                立即查看地圖/導航
+            </a>
+          </div>
+      )}
+
+      {/* 編輯者歸屬 */}
+      {item.lastEditedBy && (
+          <div className="col-span-2 mt-2 pt-2 border-t border-gray-100">
+              <p className="text-xs text-gray-500 flex items-center">
+                  <User className="w-3 h-3 text-gray-400 mr-1" />
+                  最後編輯者: <span className="font-mono text-gray-700 ml-1 truncate">{item.lastEditedBy}</span>
+                  {lastEditedTime && <span className="ml-2 text-gray-400">({lastEditedTime})</span>}
+              </p>
+          </div>
+      )}
+
+    </div>
+  );
+};
+
+// 主 App 元件
+const App = () => {
+  const [itineraryByDate, setItineraryByDate] = useState(initialItineraryData);
+  const [currentDateIndex, setCurrentDateIndex] = useState(3);
+  const [editingItem, setEditingItem] = useState(null);
+  
+  // Firebase State
+  const [db, setDb] = useState(null);
+  const [appId, setAppId] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // 新增封面圖 URL 狀態，使用使用者提供的 URL
+  const [coverImageUrl, setCoverImageUrl] = useState("http://googleusercontent.com/image_generation_content/0"); 
+
+  // 1. Firebase 初始化與認證
+  useEffect(() => {
+    // 取得 Canvas 環境變數
+    const app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    if (!firebaseConfig) {
+      console.error("Firebase configuration is missing.");
+      return;
+    }
+
+    const app = initializeApp(firebaseConfig);
+    const firestoreDb = getFirestore(app);
+    const auth = getAuth(app);
+
+    setAppId(app_id);
+    setDb(firestoreDb);
+
+    // 進行認證
+    const authenticate = async () => {
+      try {
+        if (initialAuthToken) {
+          await signInWithCustomToken(auth, initialAuthToken);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Firebase Auth error:", error);
+      }
+    };
+    
+    // 監聽認證狀態變化
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+        console.log("User authenticated. UID:", user.uid);
+      } else {
+        // 如果沒有 user，使用隨機 ID 作為匿名 ID
+        setUserId(crypto.randomUUID());
+        console.log("Using anonymous UUID for collaboration.");
+      }
+      setIsLoading(false); // 認證完成後停止載入
+    });
+
+    authenticate();
+    return () => unsubscribeAuth();
+  }, []); // 只在元件掛載時執行一次
+
+  // 2. 即時資料監聽 (onSnapshot)
+  useEffect(() => {
+    if (!db || !appId || isLoading || !userId) return; // 確保 userId 也已設定
+
+    // 協作資料路徑: /artifacts/{appId}/public/data/travel_itineraries/main_itinerary
+    const itineraryRef = doc(db, 'artifacts', appId, 'public', 'data', 'travel_itineraries', 'main_itinerary');
+
+    // 首次載入時，如果文件不存在，使用初始資料建立
+    const setupInitialData = async () => {
+        try {
+            // 寫入初始資料時，不帶編輯者資訊，讓後續編輯時才新增
+            await setDoc(itineraryRef, { 
+                itinerary: initialItineraryData, 
+                createdAt: Date.now(),
+                ownerId: userId,
+                // 同步封面圖 URL 到 Firestore (可選，但有助於協作)
+                coverImageUrl: coverImageUrl,
+            }, { merge: true });
+        } catch (error) {
+            console.error("Error setting initial itinerary data:", error);
+        }
+    };
+    
+    // 監聽資料
+    const unsubscribeSnapshot = onSnapshot(itineraryRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.itinerary) {
+          console.log("Real-time data received.");
+          setItineraryByDate(data.itinerary);
+        }
+        if (data.coverImageUrl) {
+            setCoverImageUrl(data.coverImageUrl);
+        }
+      } else {
+        // 如果文件不存在，寫入初始數據 (只在首次加載且 userId 存在時執行一次)
+        console.log("Itinerary document not found. Setting up initial data.");
+        setupInitialData();
+      }
+    }, (error) => {
+      console.error("Firestore listener error:", error);
+    });
+
+    return () => unsubscribeSnapshot();
+  }, [db, appId, userId, isLoading]); // 依賴於 db, appId, userId
+
+  // 3. 儲存/編輯邏輯 (寫入 Firestore)
+  const handleSave = useCallback(async (updatedItem) => {
+    if (!db || !appId || isLoading || !userId) {
+        console.warn('Database, App ID, or User ID not ready for saving.');
+        return;
+    }
+
+    // 1. 在更新的項目中加入編輯者 ID 和時間
+    const attributedItem = {
+        ...updatedItem,
+        lastEditedBy: userId, // 紀錄當前編輯者的 ID
+        lastEditedAt: Date.now(), // 紀錄編輯時間
+    };
+
+    // 2. 準備新的行程結構
+    const newItinerary = { ...itineraryByDate };
+    let found = false;
+
+    for (const day in newItinerary) {
+        const index = newItinerary[day].findIndex(act => act.id === updatedItem.id);
+        if (index !== -1) {
+            // 使用帶有編輯者資訊的新項目
+            newItinerary[day][index] = attributedItem; 
+            found = true;
+            break;
+        }
+    }
+
+    if (found) {
+        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'travel_itineraries', 'main_itinerary');
+        
+        // 3. 將整個更新後的行程結構寫回 Firestore
+        try {
+            await setDoc(docRef, { 
+                itinerary: newItinerary, 
+                updatedAt: Date.now() 
+            }, { merge: true });
+            console.log('Itinerary updated successfully in Firestore.');
+        } catch (error) {
+            console.error('Error saving itinerary to Firestore:', error);
+        }
+    }
+  }, [db, appId, itineraryByDate, userId, isLoading]);
+
+  // 處理封面圖 URL 更新
+  const handleCoverUrlUpdate = useCallback(async (newUrl) => {
+    setCoverImageUrl(newUrl); // 立即更新 UI
+    if (!db || !appId || !userId) return;
+
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'travel_itineraries', 'main_itinerary');
+    try {
+        await setDoc(docRef, { coverImageUrl: newUrl, updatedAt: Date.now() }, { merge: true });
+        console.log('Cover image URL updated in Firestore.');
+    } catch (error) {
+        console.error('Error updating cover image URL:', error);
+        alert('儲存封面圖 URL 失敗，請檢查網路。');
+    }
+  }, [db, appId, userId]);
+
+
+  // 其他 App 邏輯 (導航、花費計算等) 保持不變
+  const dates = useMemo(() => Object.keys(itineraryByDate), [itineraryByDate]);
+  const currentDate = dates[currentDateIndex];
+  const currentItinerary = itineraryByDate[currentDate] || [];
+
+  const navigateDay = (direction) => {
+    let newIndex = currentDateIndex + direction;
+    if (newIndex < 0) newIndex = 0; 
+    if (newIndex >= dates.length) newIndex = dates.length - 1; 
+    setCurrentDateIndex(newIndex);
+  };
+
+  const handleEdit = useCallback((item) => {
+    setEditingItem(item);
+  }, []);
+
+  const totalCost = useMemo(() => {
+    if (!currentItinerary) return 0;
+    return currentItinerary.reduce((sum, item) => {
+      // 處理成本字符串，提取數字部分
+      const costString = item.cost || 'HK$0'; // 確保有預設值
+      const match = costString.match(/(\d+)/);
+      if (match) {
+        return sum + parseInt(match[1], 10);
+      }
+      return sum;
+    }, 0);
+  }, [currentItinerary]);
+
+  if (isLoading) {
+    return (
+        <div className="min-h-screen flex items-center justify-center">
+            <div className="text-lg font-semibold text-blue-600">
+                載入中，正在連接共同編輯資料庫...
+            </div>
+        </div>
+    );
+  }
+
+  return (
+    // Mobile Frame Simulation
+    <div className="min-h-screen bg-gray-50 flex justify-center p-0 sm:p-4 font-sans">
+      <div className="w-full max-w-md bg-white shadow-2xl rounded-none sm:rounded-3xl overflow-hidden">
+        
+        {/* Header (包含封面圖和標題文字) */}
+        <header className="bg-blue-600 text-white p-0 sticky top-0 z-10 shadow-md">
+          
+          {/* 封面圖區塊 */}
+          {/* h-48 = 192px */}
+          <div className="w-full h-48 bg-gray-200 overflow-hidden relative">
+              <img
+                  src={coverImageUrl}
+                  alt="行程封面圖"
+                  onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = "https://placehold.co/1200x192/4F46E5/FFFFFF?text=Image+Load+Error";
+                  }}
+                  className="w-full h-full object-cover"
+              />
+              {/* 編輯圖片提示 */}
+              <button 
+                  className="absolute bottom-2 right-2 p-1 px-2 bg-black bg-opacity-50 text-white text-xs rounded-lg hover:bg-opacity-70 transition"
+                  onClick={() => {
+                      const newUrl = prompt("請輸入新的封面圖 URL：", coverImageUrl);
+                      if (newUrl) handleCoverUrlUpdate(newUrl);
+                  }}
+                  title="點擊替換封面圖 URL"
+              >
+                  編輯圖片 URL
+              </button>
+          </div>
+
+          {/* 標題文字內容 */}
+          <div className="p-5 pt-5">
+              <h1 className="text-xl font-black mb-1">【港進澳出】七天六夜深度遊</h1>
+              <p className="text-sm opacity-90">身為您的專業旅遊規劃師，這是完整的自助行程。</p>
+              
+              {/* 顯示協作 ID - 這是您當前身份的標識 */}
+              <div className="mt-2 flex items-center text-xs bg-blue-700 p-2 rounded-lg">
+                  <User className="w-4 h-4 mr-2" />
+                  <span className="font-semibold mr-1">您的協作 ID:</span>
+                  <span className="truncate">{userId}</span>
+              </div>
+          </div>
+        </header>
+        
+        {/* Date Navigation (需要調整 top 值) */}
+        {/* Header (圖片+文字) 高度約 312px (192px + 120px) */}
+        <div className="bg-blue-700 text-white sticky top-[312px] z-10 flex items-center justify-between p-3 shadow-md">
+            <button onClick={() => navigateDay(-1)} disabled={currentDateIndex === 0} className={`p-2 rounded-full ${currentDateIndex === 0 ? 'opacity-50' : 'hover:bg-blue-600 transition'}`}>
+                <ChevronLeft className="w-5 h-5" />
+            </button>
+            <div className='text-center'>
+                <p className="text-lg font-bold">{currentDate}</p>
+                <p className="text-xs opacity-80">
+                    {currentDateIndex < 3 ? '香港在地遊' : currentDateIndex === 3 ? '移動日' : '澳門深度遊'}
+                </p>
+            </div>
+            <button onClick={() => navigateDay(1)} disabled={currentDateIndex === dates.length - 1} className={`p-2 rounded-full ${currentDateIndex === dates.length - 1 ? 'opacity-50' : 'hover:bg-blue-600 transition'}`}>
+                <ChevronRight className="w-5 h-5" />
+            </button>
+        </div>
+
+        {/* Summary Card (需要調整 top 值) */}
+        {/* Date Nav 高度約 44px。 312px + 44px = 356px */}
+        <div className="p-4 bg-white border-b sticky top-[356px] z-10">
+            <div className="bg-green-50 border-l-4 border-green-400 p-3 rounded-r-lg shadow-sm">
+                <p className="text-sm font-semibold text-green-700">當日預估花費總計 (交通/入場/餐飲):</p>
+                <p className="text-xl font-bold text-green-900">
+                    <span className="text-sm font-medium mr-1">約</span>
+                    MOP/HKD {totalCost}+
+                </p>
+                <p className="text-xs text-green-600 mt-1">此費用已啟用即時協作。點擊卡片即可編輯。</p>
+            </div>
+        </div>
+
+        {/* Itinerary List */}
+        <main className="p-4 pt-0">
+          <div className="relative pt-4">
+            {currentItinerary.map((item, index) => (
+              <React.Fragment key={item.id}>
+                {/* Timeline Connector */}
+                {index > 0 && (
+                    <div className="absolute left-[45px] top-0 bottom-0 w-1 bg-gray-200 -z-0"></div>
+                )}
+
+                {/* Itinerary Item Card */}
+                <div className="relative pl-16">
+                    {/* Time Dot */}
+                    <div className="absolute left-0 top-0 mt-5 transform -translate-x-1/2 w-4 h-4 bg-blue-600 rounded-full border-2 border-white shadow-md"></div>
+                    <ItineraryCard item={item} onEdit={handleEdit} />
+                </div>
+              </React.Fragment>
+            ))}
+          </div>
+        </main>
+
+        {/* Floating Add Button */}
+        <button
+          onClick={() => alert("功能待開發：新增行程點")}
+          className="fixed bottom-6 right-6 sm:right-[calc(50vw-220px)] p-4 bg-purple-500 text-white rounded-full shadow-lg hover:bg-purple-600 transition duration-300 z-20"
+          aria-label="新增行程"
+        >
+          <ListPlus className="w-6 h-6" />
+        </button>
+      </div>
+
+      {/* Edit Modal Display */}
+      {editingItem && (
+        <EditModal
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSave={handleSave}
+        />
+      )}
+    </div>
+  );
+};
+
+export default App;
